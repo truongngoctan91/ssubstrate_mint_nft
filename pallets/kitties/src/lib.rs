@@ -8,6 +8,7 @@ pub use pallet::*;
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
+	use frame_support::sp_runtime;
 	use frame_support::{
 		dispatch::{DispatchResult, DispatchResultWithPostInfo},
 		pallet_prelude::*,
@@ -22,7 +23,8 @@ pub mod pallet {
 		pallet_prelude::{BlockNumberFor, OriginFor, *},
 		Origin,
 	};
-	use scale_info::TypeInfo;
+	use scale_info::{prelude::vec::Vec, TypeInfo};
+	use scale_info::prelude::vec;
 
 	#[pallet::pallet]
 	#[pallet::without_storage_info]
@@ -52,6 +54,38 @@ pub mod pallet {
 		/// The maximum amount of kitties a single account can own.
 		#[pallet::constant]
 		type MaxKittyOwned: Get<u32>;
+	}
+	// Errors.
+	#[pallet::error]
+	pub enum Error<T> {
+		/// Handles arithemtic overflow when incrementing the Kitty counter.
+		KittyCntOverflow,
+		/// An account cannot own more Kitties than `MaxKittyCount`.
+		ExceedMaxKittyOwned,
+		/// Buyer cannot be the owner.
+		BuyerIsKittyOwner,
+		/// Cannot transfer a kitty to its owner.
+		TransferToSelf,
+		/// Handles checking whether the Kitty exists.
+		KittyNotExist,
+		/// Handles checking that the Kitty is owned by the account transferring, buying or setting
+		/// a price for it.
+		NotKittyOwner,
+		/// Ensures the Kitty is for sale.
+		KittyNotForSale,
+		/// Ensures that the buying price is greater than the asking price.
+		KittyBidPriceTooLow,
+		/// Ensures that an account has enough funds to purchase a Kitty.
+		NotEnoughBalance,
+
+		//Ensure two parents are different
+		TwoKittiesAreSame,
+
+		//NotBreed because two parents are same gender
+		NotBreed,
+
+		//to Breed, ensure the parents are different gender
+		NeedDifferentGender,
 	}
 
 	#[pallet::event]
@@ -105,29 +139,28 @@ pub mod pallet {
 		ValueQuery,
 	>;
 
-	// Errors.
-	#[pallet::error]
-	pub enum Error<T> {
-		/// Handles arithemtic overflow when incrementing the Kitty counter.
-		KittyCntOverflow,
-		/// An account cannot own more Kitties than `MaxKittyCount`.
-		ExceedMaxKittyOwned,
-		/// Buyer cannot be the owner.
-		BuyerIsKittyOwner,
-		/// Cannot transfer a kitty to its owner.
-		TransferToSelf,
-		/// Handles checking whether the Kitty exists.
-		KittyNotExist,
-		/// Handles checking that the Kitty is owned by the account transferring, buying or setting
-		/// a price for it.
-		NotKittyOwner,
-		/// Ensures the Kitty is for sale.
-		KittyNotForSale,
-		/// Ensures that the buying price is greater than the asking price.
-		KittyBidPriceTooLow,
-		/// Ensures that an account has enough funds to purchase a Kitty.
-		NotEnoughBalance,
-	}
+// Our pallet's genesis configuration.
+#[pallet::genesis_config]
+pub struct GenesisConfig<T: Config> {
+    pub kitties: Vec<(T::AccountId, [u8;16])>,
+}
+
+// Required to implement default for GenesisConfig.
+impl<T: Config> Default for GenesisConfig<T> {
+    fn default() -> GenesisConfig<T> {
+        GenesisConfig { kitties: vec![] }
+    }
+}
+
+#[pallet::genesis_build]
+impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
+    fn build(&self) {
+        for &(ref acct, dna) in &self.kitties {
+
+            let _ = <Pallet<T>>::mint(acct, Some(dna.clone()), Some(Gender::Male)); //to be completed
+        }
+    }
+}
 
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
@@ -233,6 +266,31 @@ pub mod pallet {
 		}
 
 		// TODO Part III: breed_kitty
+		#[pallet::call_index(4)]
+		#[pallet::weight(100)]
+		pub fn breed_kitty(
+			origin: OriginFor<T>,
+			parent1: T::Hash,
+			parent2: T::Hash,
+		) -> DispatchResult {
+			let sender = ensure_signed(origin)?;
+			ensure!(parent1 != parent2, <Error<T>>::TwoKittiesAreSame);
+			ensure!(Self::is_kitty_owner(&parent1, &sender)?, <Error<T>>::NotKittyOwner);
+			ensure!(Self::is_kitty_owner(&parent2, &sender)?, <Error<T>>::NotKittyOwner);
+			let kitty_parent_1 = Self::kitties(&parent1).ok_or(<Error<T>>::KittyNotExist)?;
+			let kitty_parent_2 = Self::kitties(&parent2).ok_or(<Error<T>>::KittyNotExist)?;
+			let gender_kitty_parent_1 = kitty_parent_1.gender;
+			let gender_kitty_parent_2 = kitty_parent_2.gender;
+			ensure!(
+				gender_kitty_parent_1 != gender_kitty_parent_2,
+				<Error<T>>::NeedDifferentGender
+			);
+
+			let new_dna = Self::breed_dna().ok_or(<Error<T>>::NotBreed)?;
+			Self::mint(&sender, Some(new_dna), None)?;
+
+			Ok(())
+		}
 	}
 
 	// TODO Parts II: helper function for Kitty struct
@@ -248,7 +306,17 @@ pub mod pallet {
 		}
 		fn gen_gender() -> Gender {
 			let random = T::KittyRandomness::random(&b"gender"[..]).0;
-			match random.as_ref()[0] % 2 {
+
+			let unique_payload = (
+				random,
+				frame_system::Pallet::<T>::extrinsic_index().unwrap_or_default(),
+				frame_system::Pallet::<T>::block_number(),
+			);
+
+			let encoded_payload = unique_payload.encode();
+			let hash = (&encoded_payload).blake2_128();
+			// Generate Gender
+			match hash[0] % 2 {
 				0 => Gender::Male,
 				_ => Gender::Female,
 			}
@@ -316,6 +384,15 @@ pub mod pallet {
 				.map_err(|_| <Error<T>>::ExceedMaxKittyOwned)?;
 
 			Ok(())
+		}
+
+		pub fn breed_dna() -> Option<[u8; 16]> {
+			let payload = (
+				T::KittyRandomness::random(&b"newdna"[..]).0,
+				<frame_system::Pallet<T>>::block_number(),
+			);
+			let encoded_payload = payload.encode();
+			Some((&encoded_payload).blake2_128())
 		}
 	}
 }

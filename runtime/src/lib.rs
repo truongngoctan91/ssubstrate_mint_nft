@@ -277,6 +277,8 @@ impl pallet_template::Config for Runtime {
 
 impl pallet_student::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
+	type IncreaseValue = TemplateModule;
+	type Amount = ConstU32<10>;
 }
 
 parameter_types! {

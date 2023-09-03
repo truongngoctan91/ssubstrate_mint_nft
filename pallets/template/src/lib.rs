@@ -5,6 +5,7 @@
 /// <https://docs.substrate.io/reference/frame-pallets/>
 pub use pallet::*;
 
+
 #[cfg(test)]
 mod mock;
 
@@ -105,4 +106,23 @@ pub mod pallet {
 			}
 		}
 	}
+
+
+pub trait DoSomething {
+	fn increase_value(amount: u32) -> DispatchResult;
 }
+
+impl<T: Config> DoSomething for Pallet<T> {
+	fn increase_value(amount: u32) -> DispatchResult{
+		let current_value = Self::something().unwrap_or_default();
+		<Something<T>>::put(current_value + amount);
+
+		Ok(())
+	
+	
+	}
+
+
+}
+}
+

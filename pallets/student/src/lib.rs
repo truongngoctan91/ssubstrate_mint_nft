@@ -4,6 +4,7 @@
 /// Learn more about FRAME and the core library of Substrate FRAME pallets:
 /// <https://docs.substrate.io/reference/frame-pallets/>
 pub use pallet::*;
+use pallet_template::DoSomething;
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -23,9 +24,11 @@ pub mod pallet {
 
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
-	pub trait Config: frame_system::Config {
+	pub trait Config: frame_system::Config  +  pallet_template::Config{
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+		type IncreaseValue: DoSomething;
+		type Amount: Get<u32>;
 	}
 
 	#[pallet::storage]
@@ -37,6 +40,7 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		CreatedStudent { account: T::AccountId },
 		UpdatedStudent { account: T::AccountId },
+		SomethingIncrease { amount: u32, who: T::AccountId },
 	}
 
 	// Errors inform users that something went wrong.
@@ -99,6 +103,25 @@ pub mod pallet {
 			student_info.grade = grade;
 			Students::<T>::insert(&student, student_info);
 			Self::deposit_event(Event::UpdatedStudent { account: student });
+			Ok(())
+		}
+
+		#[pallet::call_index(2)]
+		#[pallet::weight(10_000)]
+		pub fn increase_on_chain_pallet_template(origin: OriginFor<T>) -> DispatchResult {
+			// Check that the extrinsic was signed and get the signer.
+			// This function will return an error if the extrinsic is not signed.
+			// https://docs.substrate.io/main-docs/build/origins/
+			let who = ensure_signed(origin)?;
+
+			// Increase value  on storage from pallet template.
+			let amount = T::Amount::get();
+			// 
+			<<T as Config>::IncreaseValue>::increase_value(amount)?;
+			//pallet_loosely_coupling::Config::IncreaseValue
+			// Emit an event.
+			Self::deposit_event(Event::SomethingIncrease { amount, who });
+			// Return a successful DispatchResultWithPostInfo
 			Ok(())
 		}
 	}

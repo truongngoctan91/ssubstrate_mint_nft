@@ -275,6 +275,10 @@ impl pallet_template::Config for Runtime {
 	type WeightInfo = pallet_template::weights::SubstrateWeight<Runtime>;
 }
 
+impl pallet_student::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+}
+
 parameter_types! {
 	pub const MaxKittyOwned: u32 = 9999;
 }
@@ -302,6 +306,7 @@ construct_runtime!(
 		// Include the custom logic from the pallet-template in the runtime.
 		TemplateModule: pallet_template,
 		KittiesModule: pallet_kitties,
+		StudentModule: pallet_student,
 	}
 );
 

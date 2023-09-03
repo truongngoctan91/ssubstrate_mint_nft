@@ -93,16 +93,16 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		/// A new kitty was successfully created.
 		/// A new Kitty was sucessfully created. \[sender, kitty_id\]
-		Created(T::AccountId, T::Hash),
+		Created(T::AccountId, [u8; 16]),
 		/// Kitty price was sucessfully set. \[sender, kitty_id, new_price\]
-		PriceSet(T::AccountId, T::Hash, Option<BalanceOf<T>>),
+		PriceSet(T::AccountId, [u8; 16], Option<BalanceOf<T>>),
 		/// A Kitty was sucessfully transferred. \[from, to, kitty_id\]
-		Transferred(T::AccountId, T::AccountId, T::Hash),
+		Transferred(T::AccountId, T::AccountId, [u8; 16]),
 		/// A Kitty was sucessfully bought. \[buyer, seller, kitty_id, bid_price\]
-		Bought(T::AccountId, T::AccountId, T::Hash, BalanceOf<T>),
+		Bought(T::AccountId, T::AccountId, [u8; 16], BalanceOf<T>),
 	}
 
-	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 	#[scale_info(skip_type_params(T))]
 	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 	pub enum Gender {
@@ -111,7 +111,7 @@ pub mod pallet {
 	}
 
 	// Struct for holding kitty information
-	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 	#[scale_info(skip_type_params(T))]
 	pub struct Kitty<T: Config> {
 		pub dna: DNA,
@@ -123,19 +123,19 @@ pub mod pallet {
 	#[pallet::storage]
 	#[pallet::getter(fn kitty_cnt)]
 	/// Keeps track of the number of Kitties in existence.
-	pub(super) type KittyCnt<T: Config> = StorageValue<_, u64, ValueQuery>;
+	pub(super) type KittyCnt<T> = StorageValue<_, u64, ValueQuery>;
 	#[pallet::storage]
 	#[pallet::getter(fn kitties)]
-	pub(super) type Kitties<T: Config> = StorageMap<_, Twox64Concat, T::Hash, Kitty<T>>;
+	pub(super) type Kitties<T: Config> = StorageMap<_, Blake2_128Concat, [u8; 16], Kitty<T>>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn kitties_owned)]
 	/// Keeps track of what accounts own what Kitty.
 	pub(super) type KittiesOwned<T: Config> = StorageMap<
 		_,
-		Twox64Concat,
+		Blake2_128Concat,
 		T::AccountId,
-		BoundedVec<T::Hash, T::MaxKittyOwned>,
+		BoundedVec<[u8; 16], T::MaxKittyOwned>,
 		ValueQuery,
 	>;
 
@@ -182,17 +182,17 @@ impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 		#[pallet::weight(10_000)]
 		pub fn set_price(
 			origin: OriginFor<T>,
-			new_price: Option<BalanceOf<T>>,
-			kitty_id: T::Hash,
+			new_price: BalanceOf<T>,
+			kitty_id: [u8; 16],
 		) -> DispatchResult {
 			let sender = ensure_signed(origin)?;
 
-			ensure!(Self::is_kitty_owner(&kitty_id, &sender)?, <Error<T>>::NotKittyOwner);
+			ensure!(Self::is_kitty_owner(kitty_id, &sender)?, <Error<T>>::NotKittyOwner);
 			let mut kitty = Self::kitties(&kitty_id).ok_or(Error::<T>::KittyNotExist)?;
-			kitty.price = new_price;
+			kitty.price = Some(new_price.clone());
 			Kitties::<T>::insert(&kitty_id, kitty);
 			// Deposit a "PriceSet" event.
-			Self::deposit_event(Event::PriceSet(sender, kitty_id, new_price));
+			Self::deposit_event(Event::PriceSet(sender, kitty_id, Some(new_price.clone())));
 
 			Ok(())
 		}
@@ -203,12 +203,12 @@ impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 		pub fn transfer(
 			origin: OriginFor<T>,
 			to: T::AccountId,
-			kitty_id: T::Hash,
+			kitty_id: [u8; 16],
 		) -> DispatchResult {
 			let from = ensure_signed(origin)?;
 
 			// Ensure the kitty exists and is called by the kitty owner
-			ensure!(Self::is_kitty_owner(&kitty_id, &from)?, <Error<T>>::NotKittyOwner);
+			ensure!(Self::is_kitty_owner(kitty_id, &from)?, <Error<T>>::NotKittyOwner);
 
 			// Verify the kitty is not transferring back to its owner.
 			ensure!(from != to, <Error<T>>::TransferToSelf);
@@ -231,7 +231,7 @@ impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 		#[pallet::weight(100)]
 		pub fn buy_kitty(
 			origin: OriginFor<T>,
-			kitty_id: T::Hash,
+			kitty_id: [u8; 16],
 			bid_price: BalanceOf<T>,
 		) -> DispatchResult {
 			let buyer = ensure_signed(origin)?;
@@ -270,13 +270,13 @@ impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 		#[pallet::weight(100)]
 		pub fn breed_kitty(
 			origin: OriginFor<T>,
-			parent1: T::Hash,
-			parent2: T::Hash,
+			parent1: [u8; 16],
+			parent2: [u8; 16],
 		) -> DispatchResult {
 			let sender = ensure_signed(origin)?;
 			ensure!(parent1 != parent2, <Error<T>>::TwoKittiesAreSame);
-			ensure!(Self::is_kitty_owner(&parent1, &sender)?, <Error<T>>::NotKittyOwner);
-			ensure!(Self::is_kitty_owner(&parent2, &sender)?, <Error<T>>::NotKittyOwner);
+			ensure!(Self::is_kitty_owner(parent1, &sender)?, <Error<T>>::NotKittyOwner);
+			ensure!(Self::is_kitty_owner(parent2, &sender)?, <Error<T>>::NotKittyOwner);
 			let kitty_parent_1 = Self::kitties(&parent1).ok_or(<Error<T>>::KittyNotExist)?;
 			let kitty_parent_2 = Self::kitties(&parent2).ok_or(<Error<T>>::KittyNotExist)?;
 			let gender_kitty_parent_1 = kitty_parent_1.gender;
@@ -328,7 +328,7 @@ impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 			owner: &T::AccountId,
 			dna: Option<[u8; 16]>,
 			gender: Option<Gender>,
-		) -> Result<T::Hash, Error<T>> {
+		) -> Result<[u8; 16], Error<T>> {
 			let kitty = Kitty::<T> {
 				dna: dna.unwrap_or_else(Self::gen_dna),
 				price: None,
@@ -336,7 +336,8 @@ impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 				owner: owner.clone(),
 			};
 
-			let kitty_id = T::Hashing::hash_of(&kitty);
+			let encoded_payload = kitty.encode();
+			let kitty_id= (&encoded_payload).blake2_128();
 
 			// Performs this operation first as it may fail
 			let new_cnt = Self::kitty_cnt().checked_add(1).ok_or(<Error<T>>::KittyCntOverflow)?;
@@ -350,14 +351,14 @@ impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 			Ok(kitty_id)
 		}
 
-		pub fn is_kitty_owner(kitty_id: &T::Hash, acct: &T::AccountId) -> Result<bool, Error<T>> {
-			match Self::kitties(kitty_id) {
+		pub fn is_kitty_owner(kitty_id: [u8; 16], acct: &T::AccountId) -> Result<bool, Error<T>> {
+			match Self::kitties(&kitty_id) {
 				Some(kitty) => Ok(kitty.owner == *acct),
 				None => Err(<Error<T>>::KittyNotExist),
 			}
 		}
 
-		pub fn transfer_kitty_to(kitty_id: &T::Hash, to: &T::AccountId) -> Result<(), Error<T>> {
+		pub fn transfer_kitty_to(kitty_id: &[u8; 16], to: &T::AccountId) -> Result<(), Error<T>> {
 			let mut kitty = Self::kitties(&kitty_id).ok_or(<Error<T>>::KittyNotExist)?;
 
 			let prev_owner = kitty.owner;
@@ -378,7 +379,7 @@ impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 			// by the current owner.
 			kitty.price = None;
 
-			<Kitties<T>>::insert(kitty_id, kitty);
+			<Kitties<T>>::insert(&kitty_id, kitty);
 
 			<KittiesOwned<T>>::try_mutate(to, |vec| vec.try_push(*kitty_id))
 				.map_err(|_| <Error<T>>::ExceedMaxKittyOwned)?;
